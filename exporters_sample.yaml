@@ -1,7 +1,5 @@
 inputs:
   - name: prometheus_node_exporter
-  - name: prometheus_go
-    interval: 15s
   - name: http_metrics
     options:
       host: 127.0.0.1
@@ -12,4 +10,6 @@ output:
   name: http
 
 tags:
-  instance: 127.0.0.1
+  key: value
+
+command_type : 0

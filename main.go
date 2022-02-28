@@ -2,17 +2,17 @@ package main
 
 import (
 	"os"
-	"os/signal"
-	"syscall"
+
+	"trellis.tech/kolekti/prome_exporters/agent"
+	"trellis.tech/kolekti/prome_exporters/cmd/command"
+	"trellis.tech/kolekti/prome_exporters/cmd/server"
+	"trellis.tech/kolekti/prome_exporters/conf"
 
 	"github.com/go-kit/log/level"
 	"github.com/prometheus/common/version"
 	"gopkg.in/alecthomas/kingpin.v2"
 	promlog "trellis.tech/trellis/common.v1/logger/prometheus"
 	flag "trellis.tech/trellis/common.v1/logger/prometheus/flag"
-
-	"trellis.tech/kolekti/prome_exporters/agent"
-	"trellis.tech/kolekti/prome_exporters/conf"
 
 	_ "trellis.tech/kolekti/prome_exporters/plugins/inputs/all"
 	_ "trellis.tech/kolekti/prome_exporters/plugins/outputs/all"
@@ -52,14 +52,12 @@ func run() int {
 		return 2
 	}
 
-	if err := a.Run(); err != nil {
-		level.Error(logger).Log("failed_run_agent", ec, "error", err)
-		return 3
+	switch ec.CommandType {
+	case 0:
+		return command.Run(a)
+	case 1:
+		return server.Run(a)
+	default:
+		return 10
 	}
-
-	ch := make(chan os.Signal)
-	signal.Notify(ch, os.Interrupt, os.Kill, syscall.SIGUSR1, syscall.SIGUSR2)
-	<-ch
-	a.Stop()
-	return 0
 }

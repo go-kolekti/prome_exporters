@@ -1,84 +1,46 @@
 package inputs
 
 import (
+	"reflect"
 	"strings"
 
-	dto "github.com/prometheus/client_model/go"
-
-	"github.com/go-kit/log"
-	"github.com/prometheus/client_golang/prometheus"
-
 	"trellis.tech/kolekti/prome_exporters/plugins"
-	"trellis.tech/trellis/common.v1/config"
+
 	"trellis.tech/trellis/common.v1/errcode"
 )
 
-type InputType int32
-
-const (
-	InputTypePrometheusCollector InputType = iota
-	InputTypeMetricsCollector
-)
-
-type Option func(*Options)
-type Options struct {
-	Config config.Config
-	Logger log.Logger
-}
-
-func Config(c config.Config) Option {
-	return func(o *Options) {
-		o.Config = c
-	}
-}
-
-func Logger(l log.Logger) Option {
-	return func(o *Options) {
-		o.Logger = l
-	}
-}
-
-type FactoryPrometheusCollector func(...Option) (prometheus.Collector, error)
-type FactoryMetricsCollector func(...Option) (InputMetricsCollector, error)
+type FactoryPrometheusCollector func(...plugins.Option) (plugins.InputPrometheusCollector, error)
+type FactoryMetricsCollector func(...plugins.Option) (plugins.InputMetricsCollector, error)
 
 var (
 	mapNewCollectorFunc = make(map[string]*Input)
 )
 
 type Input struct {
-	inputType InputType
+	inputType plugins.InputType
 
 	pcFactory FactoryPrometheusCollector
 	mcFactory FactoryMetricsCollector
 }
 
-func (p *Input) InputType() InputType {
+func (p *Input) InputType() plugins.InputType {
 	return p.inputType
 }
 
-func (p *Input) NewPrometheusCollector(opts ...Option) (InputPrometheusCollector, error) {
-	if p.inputType != InputTypePrometheusCollector || p.pcFactory == nil {
+func (p *Input) NewPrometheusCollector(opts ...plugins.Option) (plugins.InputPrometheusCollector, error) {
+	if p.inputType != plugins.InputTypePrometheusCollector || p.pcFactory == nil {
 		return nil, errcode.Newf("its not prometheus collector factory, type: %d, %+v", p.inputType, p.pcFactory)
 	}
 
 	return p.pcFactory(opts...)
 }
 
-func (p *Input) NewMetricsCollector(opts ...Option) (InputMetricsCollector, error) {
-	if p.inputType != InputTypeMetricsCollector || p.mcFactory == nil {
+func (p *Input) NewMetricsCollector(opts ...plugins.Option) (plugins.InputMetricsCollector, error) {
+	if p.inputType != plugins.InputTypeMetricsCollector || p.mcFactory == nil {
 		return nil, errcode.Newf("its not metrics collector factory, type: %d, %+v", p.inputType, p.mcFactory)
 	}
 
 	return p.mcFactory(opts...)
-}
-
-type InputPrometheusCollector interface {
-	prometheus.Collector
-}
-
-type InputMetricsCollector interface {
-	plugins.PluginDescriber
-	Gather() ([]*dto.MetricFamily, error)
 }
 
 func RegisterFactory(name string, fn interface{}) {
@@ -95,19 +57,20 @@ func RegisterFactory(name string, fn interface{}) {
 	var input = &Input{}
 	switch t := fn.(type) {
 	case FactoryPrometheusCollector:
-		input.inputType = InputTypePrometheusCollector
+		input.inputType = plugins.InputTypePrometheusCollector
 		input.pcFactory = t
-	case func(...Option) (prometheus.Collector, error):
-		input.inputType = InputTypePrometheusCollector
+	case func(...plugins.Option) (plugins.InputPrometheusCollector, error):
+		input.inputType = plugins.InputTypePrometheusCollector
 		input.pcFactory = t
 	case FactoryMetricsCollector:
-		input.inputType = InputTypeMetricsCollector
+		input.inputType = plugins.InputTypeMetricsCollector
 		input.mcFactory = t
-	case func(...Option) (InputMetricsCollector, error):
-		input.inputType = InputTypeMetricsCollector
+	case func(...plugins.Option) (plugins.InputMetricsCollector, error):
+		input.inputType = plugins.InputTypeMetricsCollector
 		input.mcFactory = t
+
 	default:
-		panic(errcode.Newf("not supported type : %+v", t))
+		panic(errcode.Newf("not supported type : %s, %+v", name, reflect.TypeOf(t).String()))
 	}
 	mapNewCollectorFunc[name] = input
 }

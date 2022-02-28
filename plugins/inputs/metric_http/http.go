@@ -12,14 +12,14 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/go-kit/log/level"
+	"trellis.tech/kolekti/prome_exporters/plugins"
+	"trellis.tech/kolekti/prome_exporters/plugins/inputs"
 
+	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 	"github.com/matttproud/golang_protobuf_extensions/pbutil"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
-
-	"github.com/go-kit/log"
-	"trellis.tech/kolekti/prome_exporters/plugins/inputs"
 	"trellis.tech/trellis/common.v1/types"
 )
 
@@ -138,9 +138,9 @@ func (p *HTTPMetricCollector) Gather() ([]*dto.MetricFamily, error) {
 }
 
 func init() {
-	inputs.RegisterFactory("http_metrics", func(opts ...inputs.Option) (inputs.InputMetricsCollector, error) {
+	inputs.RegisterFactory("http_metrics", func(opts ...plugins.Option) (plugins.InputMetricsCollector, error) {
 
-		options := &inputs.Options{}
+		options := &plugins.Options{}
 		for _, o := range opts {
 			o(options)
 		}

@@ -3,13 +3,15 @@ package agent
 import (
 	"time"
 
+	"trellis.tech/kolekti/prome_exporters/conf"
+	"trellis.tech/kolekti/prome_exporters/plugins"
+	"trellis.tech/kolekti/prome_exporters/plugins/inputs"
+	"trellis.tech/kolekti/prome_exporters/plugins/outputs"
+
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
-	"trellis.tech/kolekti/prome_exporters/conf"
-	"trellis.tech/kolekti/prome_exporters/plugins/inputs"
-	"trellis.tech/kolekti/prome_exporters/plugins/outputs"
 	"trellis.tech/trellis/common.v1/data-structures/queue"
 	"trellis.tech/trellis/common.v1/errcode"
 )
@@ -18,7 +20,7 @@ import (
 type Agent struct {
 	Config *conf.ExporterConfig
 
-	logger log.Logger
+	Logger log.Logger
 
 	interval time.Duration
 
@@ -40,14 +42,14 @@ type runningInput struct {
 	promeRegisterer prometheus.Registerer
 	promeGatherer   prometheus.Gatherer
 
-	promeCollector   inputs.InputPrometheusCollector
-	metricsCollector inputs.InputMetricsCollector
+	promeCollector   plugins.InputPrometheusCollector
+	metricsCollector plugins.InputMetricsCollector
 
 	stopChan chan struct{}
 }
 
 type runningOutput struct {
-	output   outputs.Output
+	output   plugins.Output
 	stopChan chan struct{}
 }
 
@@ -55,7 +57,7 @@ type runningOutput struct {
 func NewAgent(cfg *conf.ExporterConfig, logger log.Logger) (*Agent, error) {
 	a := &Agent{
 		Config: cfg,
-		logger: logger,
+		Logger: logger,
 
 		metricsChan: make(chan []*dto.MetricFamily, len(cfg.Inputs)),
 
@@ -87,14 +89,16 @@ func (p *Agent) checkConfig() error {
 			return err
 		}
 
-		logger := log.WithPrefix(p.logger, "input", inputConfig.Name)
-		opts := []inputs.Option{
-			inputs.Logger(logger),
+		logger := log.WithPrefix(p.Logger, "input", inputConfig.Name)
+		opts := []plugins.Option{
+			plugins.Logger(logger),
 		}
 
 		if inputConfig.Options != nil {
-			opts = append(opts, inputs.Config(inputConfig.Options.ToConfig()))
+			opts = append(opts, plugins.Config(inputConfig.Options.ToConfig()))
 		}
+
+		level.Info(logger).Log("msg", "init_input", "interval", interval)
 
 		runningInput := &runningInput{
 			input:    input,
@@ -104,7 +108,7 @@ func (p *Agent) checkConfig() error {
 			stopChan: make(chan struct{}),
 		}
 		switch input.InputType() {
-		case inputs.InputTypePrometheusCollector:
+		case plugins.InputTypePrometheusCollector:
 			runningInput.promeCollector, err = input.NewPrometheusCollector(opts...)
 			if err != nil {
 				return err
@@ -113,7 +117,7 @@ func (p *Agent) checkConfig() error {
 			runningInput.promeRegisterer = reg
 			runningInput.promeGatherer = reg
 			runningInput.promeRegisterer.Register(runningInput.promeCollector)
-		case inputs.InputTypeMetricsCollector:
+		case plugins.InputTypeMetricsCollector:
 			runningInput.metricsCollector, err = input.NewMetricsCollector(opts...)
 			if err != nil {
 				return err
@@ -130,12 +134,12 @@ func (p *Agent) checkConfig() error {
 			return err
 		}
 
-		opts := []outputs.Option{
-			outputs.Logger(log.WithPrefix(p.logger, "output", p.Config.Output.Name)),
+		opts := []plugins.Option{
+			plugins.Logger(log.WithPrefix(p.Logger, "output", p.Config.Output.Name)),
 		}
 
 		if p.Config.Output.Options != nil {
-			opts = append(opts, outputs.Config(p.Config.Output.Options.ToConfig()))
+			opts = append(opts, plugins.Config(p.Config.Output.Options.ToConfig()))
 		}
 
 		output, err := outFun(opts...)
@@ -152,19 +156,29 @@ func (p *Agent) runInputs() error {
 	gather := func(input *runningInput) ([]*dto.MetricFamily, error) {
 
 		switch input.input.InputType() {
-		case inputs.InputTypePrometheusCollector:
-			metrics, err := input.promeGatherer.Gather()
+		case plugins.InputTypePrometheusCollector:
+			metricFamilies, err := input.promeGatherer.Gather()
 			if err != nil {
 				level.Error(input.logger).Log("error", err.Error())
 				return nil, err
 			}
-			return metrics, nil
-		case inputs.InputTypeMetricsCollector:
+
+			for k, v := range input.promeCollector.Tags() {
+				for _, mf := range metricFamilies {
+					for i, metric := range mf.GetMetric() {
+						metric.Label = append(metric.Label, &dto.LabelPair{Name: &k, Value: &v})
+						mf.GetMetric()[i] = metric
+					}
+				}
+			}
+			return metricFamilies, nil
+		case plugins.InputTypeMetricsCollector:
 			metrics, err := input.metricsCollector.Gather()
 			if err != nil {
 				level.Error(input.logger).Log("error", err.Error())
 				return nil, err
 			}
+
 			return metrics, nil
 		}
 		return nil, nil
@@ -179,7 +193,7 @@ func (p *Agent) runInputs() error {
 				select {
 				case <-ticker.C:
 					level.Info(in.logger).Log("msg", "start_gather")
-					metrics, err := gather(input)
+					metrics, err := gather(in)
 					if err != nil {
 						continue
 					}
@@ -224,7 +238,7 @@ func (p *Agent) runOutputs() error {
 						batch = lenBuffer
 					}
 
-					level.Info(p.logger).Log("msg", "write_output_size", "buffer_length", lenBuffer, "batch_size", batch)
+					level.Info(p.Logger).Log("msg", "write_output_size", "buffer_length", lenBuffer, "batch_size", batch)
 
 					metricBuffers, ok := p.metricsBuffer.PopMany(batch)
 					if !ok {
@@ -237,41 +251,33 @@ func (p *Agent) runOutputs() error {
 						names      []string
 					)
 					for _, buf := range metricBuffers {
-						metric, ok := buf.(*dto.MetricFamily)
-						if !ok || metric == nil {
+						metricFamily, ok := buf.(*dto.MetricFamily)
+						if !ok || metricFamily == nil {
 							continue
 						}
-						mf, ok := mapMetrics[metric.GetName()]
+						mf, ok := mapMetrics[metricFamily.GetName()]
 						if ok {
-							for _, m := range metric.GetMetric() {
-								mf.Metric = append(mf.GetMetric(), m)
-							}
+							mf.Metric = append(mf.GetMetric(), metricFamily.GetMetric()...)
 						} else {
-							mf = metric
-							names = append(names, metric.GetName())
+							mf = metricFamily
+							names = append(names, metricFamily.GetName())
 						}
 
-						mapMetrics[metric.GetName()] = mf
+						mapMetrics[mf.GetName()] = mf
 					}
 					if len(names) == 0 {
-						level.Warn(p.logger).Log("msg", "write_output_failed", "buffer_length", lenBuffer, "error", "at least one metric")
+						level.Warn(p.Logger).Log("msg", "write_output_failed", "buffer_length", lenBuffer, "error", "at least one metric")
 						continue
 					}
 
 					var metrics []*dto.MetricFamily
 					for _, name := range names {
 						mf := mapMetrics[name]
-						for i, m := range mf.GetMetric() {
-							for k, v := range p.Config.Tags {
-								m.Label = append(m.Label, &dto.LabelPair{Name: &k, Value: &v})
-							}
-							mf.Metric[i] = m
-						}
 						metrics = append(metrics, mf)
 					}
 
 					if err := runOut.output.Write(metrics); err != nil {
-						level.Error(p.logger).Log("msg", "write_output_failed", "buffer_length", lenBuffer, "error", err)
+						level.Error(p.Logger).Log("msg", "write_output_failed", "buffer_length", lenBuffer, "error", err)
 						break
 					}
 
@@ -279,7 +285,7 @@ func (p *Agent) runOutputs() error {
 				}
 			case <-runOut.stopChan:
 				if err := runOut.output.Close(); err != nil {
-					level.Error(p.logger).Log("msg", "failed_stop_output", "error", err)
+					level.Error(p.Logger).Log("msg", "failed_stop_output", "error", err)
 				}
 				return
 			}
@@ -294,11 +300,11 @@ func (p *Agent) runMetricsChan() {
 		for {
 			select {
 			case metrics := <-p.metricsChan:
-				level.Info(p.logger).Log("read_buffer_from_metric_chan", len(metrics))
+				level.Info(p.Logger).Log("read_buffer_from_metric_chan", len(metrics))
 				for _, metric := range metrics {
 					lenBuffer := p.metricsBuffer.Length()
 					if lenBuffer >= p.Config.MetricBufferLimit {
-						level.Warn(p.logger).Log("out_of_the_limit_of_buffer", lenBuffer, "limit", p.Config.MetricBufferLimit)
+						level.Warn(p.Logger).Log("out_of_the_limit_of_buffer", lenBuffer, "limit", p.Config.MetricBufferLimit)
 						continue
 					}
 					p.metricsBuffer.Push(metric)
@@ -316,7 +322,7 @@ func (p *Agent) stopRunningInputs() {
 			input.stopChan <- struct{}{}
 			close(input.stopChan)
 		}
-		if input.input.InputType() == inputs.InputTypePrometheusCollector {
+		if input.input.InputType() == plugins.InputTypePrometheusCollector {
 			input.promeRegisterer.Unregister(input.promeCollector)
 		}
 	}

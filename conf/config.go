@@ -6,6 +6,9 @@ import (
 )
 
 type ExporterConfig struct {
+	// 0 command; 1 server
+	CommandType int `yaml:"command_type" json:"command_type"`
+
 	FlushInterval types.Duration `yaml:"flush_interval" json:"flush_interval"`
 
 	MetricBufferLimit int64 `yaml:"metric_buffer_limit" json:"metric_buffer_limit"`
@@ -20,6 +23,8 @@ type ExporterConfig struct {
 type InputsConfig struct {
 	Name     string         `yaml:"name" json:"name"`
 	Interval types.Duration `yaml:"interval" json:"interval"`
+
+	Tags map[string]string `yaml:"tags" json:"tags"`
 
 	Options config.Options `json:"options" yaml:"options"`
 }

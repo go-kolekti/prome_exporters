@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"strings"
 
-	"trellis.tech/kolekti/prome_exporters/plugins/outputs"
-
 	"trellis.tech/kolekti/prome_exporters/internal"
+	"trellis.tech/kolekti/prome_exporters/plugins"
+	"trellis.tech/kolekti/prome_exporters/plugins/outputs"
 	"trellis.tech/kolekti/prome_exporters/plugins/serializers"
 
 	dto "github.com/prometheus/client_model/go"
@@ -161,8 +161,8 @@ func (h *HTTP) writeMetric(reqBody []byte) error {
 }
 
 func init() {
-	outputs.RegisterFactory("http", func(opts ...outputs.Option) (outputs.Output, error) {
-		options := &outputs.Options{}
+	outputs.RegisterFactory("http", func(opts ...plugins.Option) (plugins.Output, error) {
+		options := &plugins.Options{}
 		for _, opt := range opts {
 			opt(options)
 		}

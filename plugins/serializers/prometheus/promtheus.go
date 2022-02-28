@@ -3,9 +3,10 @@ package prometheus
 import (
 	"bytes"
 
+	"trellis.tech/kolekti/prome_exporters/plugins/serializers"
+
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
-	"trellis.tech/kolekti/prome_exporters/plugins/serializers"
 )
 
 func init() {
