@@ -1,0 +1,186 @@
+package http
+
+import (
+	"bufio"
+	"bytes"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+
+	"trellis.tech/kolekti/prome_exporters/plugins/outputs"
+
+	"trellis.tech/kolekti/prome_exporters/internal"
+	"trellis.tech/kolekti/prome_exporters/plugins/serializers"
+
+	dto "github.com/prometheus/client_model/go"
+	"trellis.tech/trellis/common.v1/builder"
+)
+
+const (
+	maxErrMsgLen = 1024
+	defaultURL   = "http://127.0.0.1:9091/metrics/job/kolekti"
+)
+
+const (
+	defaultContentType = "text/plain; charset=utf-8"
+	defaultMethod      = http.MethodPost
+)
+
+type HTTP struct {
+	URL                     string            `yaml:"url"`
+	Method                  string            `yaml:"method"`
+	Username                string            `yaml:"username"`
+	Password                string            `yaml:"password"`
+	Headers                 map[string]string `yaml:"headers"`
+	ContentEncoding         string            `yaml:"content_encoding"`
+	NonRetryableStatusCodes []int             `yaml:"non_retryable_statuscodes"`
+
+	SerializerConfig serializers.SerializerConfig `yaml:"serializer_config" json:"serializer_config"`
+
+	client *http.Client `yaml:"-" json:"-"`
+
+	serializer serializers.Serializer `yaml:"-" json:"-"`
+}
+
+func (h *HTTP) SetSerializer(serializer serializers.Serializer) {
+	h.serializer = serializer
+}
+
+func (h *HTTP) Connect() error {
+
+	if h.Method == "" {
+		h.Method = defaultMethod
+	}
+	h.Method = strings.ToUpper(h.Method)
+	if h.Method != http.MethodPost && h.Method != http.MethodPut {
+		return fmt.Errorf("invalid method [%s] %s", h.URL, h.Method)
+	}
+
+	if h.URL == "" {
+		h.URL = defaultURL
+	}
+
+	// todo http config
+	h.client = &http.Client{}
+
+	return nil
+}
+
+func (h *HTTP) SampleConfig() string {
+	return ""
+}
+
+func (h *HTTP) Close() error {
+	return nil
+}
+
+func (h *HTTP) Description() string {
+	return "A plugin that can transmit metrics over HTTP"
+}
+
+func (h *HTTP) Write(metrics []*dto.MetricFamily) (err error) {
+	var reqBody []byte
+	reqBody, err = h.serializer.SerializeBatch(metrics)
+	if err != nil {
+		return
+	}
+
+	if err = h.writeMetric(reqBody); err != nil {
+		return
+	}
+
+	return nil
+}
+
+func (h *HTTP) writeMetric(reqBody []byte) error {
+	var reqBodyBuffer io.Reader = bytes.NewBuffer(reqBody)
+
+	var err error
+	if h.ContentEncoding == "gzip" {
+		rc, err := internal.CompressWithGzip(reqBodyBuffer)
+		if err != nil {
+			return err
+		}
+		defer rc.Close()
+		reqBodyBuffer = rc
+	}
+
+	req, err := http.NewRequest(h.Method, h.URL, reqBodyBuffer)
+	if err != nil {
+		return err
+	}
+
+	if h.Username != "" || h.Password != "" {
+		req.SetBasicAuth(h.Username, h.Password)
+	}
+
+	req.Header.Set("User-Agent", builder.Version())
+	req.Header.Set("Content-Type", defaultContentType)
+	if h.ContentEncoding == "gzip" {
+		req.Header.Set("Content-Encoding", "gzip")
+	}
+	for k, v := range h.Headers {
+		if strings.ToLower(k) == "host" {
+			req.Host = v
+		}
+		req.Header.Set(k, v)
+	}
+
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		for _, nonRetryableStatusCode := range h.NonRetryableStatusCodes {
+			if resp.StatusCode == nonRetryableStatusCode {
+				return nil
+			}
+		}
+
+		errorLine := ""
+		scanner := bufio.NewScanner(io.LimitReader(resp.Body, maxErrMsgLen))
+		if scanner.Scan() {
+			errorLine = scanner.Text()
+		}
+
+		return fmt.Errorf("when writing to [%s] received status code: %d. body: %s", h.URL, resp.StatusCode, errorLine)
+	}
+
+	_, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("when writing to [%s] received error: %v", h.URL, err)
+	}
+
+	return nil
+}
+
+func init() {
+	outputs.RegisterFactory("http", func(opts ...outputs.Option) (outputs.Output, error) {
+		options := &outputs.Options{}
+		for _, opt := range opts {
+			opt(options)
+		}
+
+		output := &HTTP{
+			// serializer: &prometheus.Serializer{},
+		}
+
+		if options.Config != nil {
+			options.Config.ToObject("", output)
+		}
+
+		var err error
+		output.serializer, err = serializers.NewSerializer(&output.SerializerConfig)
+		if err != nil {
+			return nil, err
+		}
+
+		return output, nil
+	})
+}
