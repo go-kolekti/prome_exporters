@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"trellis.tech/kolekti/prome_exporters/internal"
 	"trellis.tech/kolekti/prome_exporters/plugins"
@@ -15,11 +16,14 @@ import (
 
 	dto "github.com/prometheus/client_model/go"
 	"trellis.tech/trellis/common.v1/builder"
+	"trellis.tech/trellis/common.v1/crypto/tls"
+	"trellis.tech/trellis/common.v1/types"
 )
 
 const (
-	maxErrMsgLen = 1024
-	defaultURL   = "http://127.0.0.1:9091/metrics/job/kolekti"
+	maxErrMsgLen   = 1024
+	defaultURL     = "http://127.0.0.1:9091/metrics/job/kolekti"
+	defaultTimeout = 10 * time.Second
 )
 
 const (
@@ -36,7 +40,11 @@ type HTTP struct {
 	ContentEncoding         string            `yaml:"content_encoding"`
 	NonRetryableStatusCodes []int             `yaml:"non_retryable_statuscodes"`
 
+	Timeout types.Duration `yaml:"timeout" json:"timeout"`
+
 	SerializerConfig serializers.SerializerConfig `yaml:"serializer_config" json:"serializer_config"`
+
+	TlsConfig *tls.Config `yaml:"tls_config" json:"tls_config"`
 
 	client *http.Client `yaml:"-" json:"-"`
 
@@ -60,9 +68,6 @@ func (h *HTTP) Connect() error {
 	if h.URL == "" {
 		h.URL = defaultURL
 	}
-
-	// todo http config
-	h.client = &http.Client{}
 
 	return nil
 }
@@ -167,20 +172,40 @@ func init() {
 			opt(options)
 		}
 
-		output := &HTTP{
-			// serializer: &prometheus.Serializer{},
-		}
+		p := &HTTP{}
 
 		if options.Config != nil {
-			options.Config.ToObject("", output)
+			options.Config.ToObject("", p)
+		}
+
+		transport := &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+		}
+
+		if p.TlsConfig != nil {
+			tlsConfig, err := p.TlsConfig.GetTLSConfig()
+			if err != nil {
+				return nil, err
+			}
+			transport.TLSClientConfig = tlsConfig
+		}
+
+		timeout := defaultTimeout
+		if p.Timeout != 0 {
+			timeout = time.Duration(p.Timeout)
+		}
+
+		p.client = &http.Client{
+			Timeout:   timeout,
+			Transport: transport,
 		}
 
 		var err error
-		output.serializer, err = serializers.NewSerializer(&output.SerializerConfig)
+		p.serializer, err = serializers.NewSerializer(&p.SerializerConfig)
 		if err != nil {
 			return nil, err
 		}
 
-		return output, nil
+		return p, nil
 	})
 }
