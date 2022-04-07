@@ -11,5 +11,5 @@ require (
 	github.com/prometheus/exporter-toolkit v0.7.1
 	github.com/prometheus/node_exporter v1.3.1
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6
-	trellis.tech/trellis/common.v1 v0.0.0-20220303123443-b957c9f7842a
+	trellis.tech/trellis/common.v1 v0.0.0-20220407122437-0f01e4f5696a
 )

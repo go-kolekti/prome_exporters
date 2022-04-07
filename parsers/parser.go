@@ -12,25 +12,10 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
-package serializers
+package parsers
 
-var defaultSerializerConfig = &SerializerConfig{
-	Name: "prometheus",
-}
+import dto "github.com/prometheus/client_model/go"
 
-type SerializerConfig struct {
-	Name string `yaml:"name" json:"name"`
-}
-
-func NewSerializer(c *SerializerConfig) (Serializer, error) {
-	if c == nil || c.Name == "" {
-		c = defaultSerializerConfig
-	}
-
-	f, err := GetFactory(c.Name)
-	if err != nil {
-		return nil, err
-	}
-
-	return f()
+type Parser interface {
+	Parse(bs []byte, tags map[string]string, ct string) (map[string]*dto.MetricFamily, error)
 }

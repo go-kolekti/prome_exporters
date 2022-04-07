@@ -1,39 +1,38 @@
 inputs:
   - name: prometheus_node_exporter
-    interval: 5s # default 1s
-  - name: prometheus
+    interval: 5s # defaults 1s
+  - name: http
     interval: 5s
     options:
-      host: 127.0.0.1
-      port: 10000
-      metrics_path: /jmx
+      urls: ["http://127.0.0.1:10000/jmx"]
+      parser: jmx
       tags:
-        type: jmx
-  - name: prometheus
+        parser_type: jmx
+  - name: http
     interval: 5s
     options:
-      host: 127.0.0.1
-      port: 9090
-      metrics_path: /metrics
+      urls: ["http://127.0.0.1:9090/metrics"]
+      parser: prometheus
       tags:
-        type: prometheus
-  - name: opentsdb
+        parser_type: prometheus
+  - name: http
     interval: 10s
     options:
-      host: 127.0.0.1
-      port: 4242
-      tags:
-        type: opentsdb
+      urls: ["http://127.0.0.1:4242/api/stats"]
+      parser: opentsdb
   - name: zookeeper
     interval: 10s
     options:
       servers: ["127.0.0.1:2181","127.0.0.2"]
       tags:
-        type: zookeeper
+        parser_type: zookeeper
 
 output:
   name: http
-  interval: 1s # default 1s
+#  url: http://localhost:9091/metrics/job/test
+  interval: 1s # defaults 1s
+  options:
+    print_metrics: true
 
 exporter:
   command_type : 1

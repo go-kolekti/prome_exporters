@@ -11,9 +11,7 @@ A framework for exporters to collect prometheus metrics
 ### Feature
 
 * Prometheus NodeExporter (prometheus_node_exporter)
-* Supported Java JMX HTTP API (jmx)
-* Supported Prometheus HTTP API (prometheus)
-* Supported OpenTSDB HTTP API (opentsdb)
+* Supported HTTP GET From API Server, supported parsers: prometheus, jmx, opentsdb (http)
 * Zookeeper TCP: mntr (zookeeper)
 
 ## output
@@ -28,7 +26,7 @@ type Output interface {
 	// Connect to the Output; connect is only called once when the plugin starts
 	Connect() error
 	// Close any connections to the Output. Close is called once when the output
-	// is shutting down. Close will not be called until all writes have finished,
+	// is shutting down. Close will not be called until defaults writes have finished,
 	// and Write() will not be called once Close() has been, so locking is not
 	// necessary.
 	Close() error
@@ -36,6 +34,16 @@ type Output interface {
 	Write(metrics []*dto.MetricFamily) error
 }
 ```
+
+## Parsers
+
+> parsers metrics bytes to map[string]*dto.MetricFamily
+
+### Feature
+
+* Supported Java JMX HTTP Metric (jmx)
+* Supported Prometheus HTTP Metric (prometheus)
+* Supported OpenTSDB HTTP Metric (opentsdb)
 
 ## todo
 

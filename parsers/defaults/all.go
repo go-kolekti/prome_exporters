@@ -12,25 +12,28 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
-package serializers
+package defaults
 
-var defaultSerializerConfig = &SerializerConfig{
-	Name: "prometheus",
-}
+import (
+	"fmt"
 
-type SerializerConfig struct {
-	Name string `yaml:"name" json:"name"`
-}
+	"trellis.tech/kolekti/prome_exporters/parsers/jmx"
 
-func NewSerializer(c *SerializerConfig) (Serializer, error) {
-	if c == nil || c.Name == "" {
-		c = defaultSerializerConfig
+	"github.com/go-kit/log"
+	"trellis.tech/kolekti/prome_exporters/parsers"
+	"trellis.tech/kolekti/prome_exporters/parsers/opentsdb"
+	"trellis.tech/kolekti/prome_exporters/parsers/prometheus"
+)
+
+func NewParser(name string, logger log.Logger) (parsers.Parser, error) {
+	switch name {
+	case "", "prometheus":
+		return prometheus.NewParser(logger)
+	case "jmx":
+		return jmx.NewParser(logger)
+	case "opentsdb":
+		return opentsdb.NewParser(logger)
+	default:
+		return nil, fmt.Errorf("unsupported parser type")
 	}
-
-	f, err := GetFactory(c.Name)
-	if err != nil {
-		return nil, err
-	}
-
-	return f()
 }
