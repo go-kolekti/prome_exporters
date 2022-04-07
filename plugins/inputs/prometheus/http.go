@@ -1,4 +1,4 @@
-package metric_http
+package prometheus
 
 import (
 	"bufio"
@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"time"
 
+	"trellis.tech/kolekti/prome_exporters/internal"
 	"trellis.tech/kolekti/prome_exporters/plugins"
 	"trellis.tech/kolekti/prome_exporters/plugins/inputs"
 
@@ -76,10 +77,7 @@ func (p *HTTPMetricCollector) Gather() ([]*dto.MetricFamily, error) {
 		// todo log
 		return nil, err
 	}
-	defer func() {
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-	}()
+	defer internal.IOClose(resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		errorLine := ""
@@ -141,7 +139,7 @@ func (p *HTTPMetricCollector) Gather() ([]*dto.MetricFamily, error) {
 }
 
 func init() {
-	inputs.RegisterFactory("http_metrics", func(opts ...plugins.Option) (plugins.InputMetricsCollector, error) {
+	inputs.RegisterFactory("prometheus", func(opts ...plugins.Option) (plugins.InputMetricsCollector, error) {
 
 		options := &plugins.Options{}
 		for _, o := range opts {

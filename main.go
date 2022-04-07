@@ -52,7 +52,7 @@ func run() int {
 		return 2
 	}
 
-	switch ec.CommandType {
+	switch ec.Exporter.CommandType {
 	case 0:
 		return command.Run(a)
 	case 1:

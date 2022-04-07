@@ -16,9 +16,11 @@ import (
 	"trellis.tech/trellis/common.v1/errcode"
 )
 
+const minInterval = time.Second * 1
+
 // Agent runs a set of plugins.
 type Agent struct {
-	Config *conf.ExporterConfig
+	Config *conf.Config
 
 	Logger log.Logger
 
@@ -54,7 +56,7 @@ type runningOutput struct {
 }
 
 // NewAgent returns an Agent for the given Config.
-func NewAgent(cfg *conf.ExporterConfig, logger log.Logger) (*Agent, error) {
+func NewAgent(cfg *conf.Config, logger log.Logger) (*Agent, error) {
 	a := &Agent{
 		Config: cfg,
 		Logger: logger,
@@ -71,18 +73,18 @@ func NewAgent(cfg *conf.ExporterConfig, logger log.Logger) (*Agent, error) {
 
 func (p *Agent) checkConfig() error {
 
-	if p.Config.MetricBufferLimit == 0 {
-		p.Config.MetricBufferLimit = 10000
+	if p.Config.Exporter.MetricBufferLimit == 0 {
+		p.Config.Exporter.MetricBufferLimit = 10000
 	}
-	if p.Config.MetricBatchSize == 0 {
-		p.Config.MetricBatchSize = 10000
+	if p.Config.Exporter.MetricBatchSize == 0 {
+		p.Config.Exporter.MetricBatchSize = 10000
 	}
 	// inputs
 	for _, inputConfig := range p.Config.Inputs {
 
 		interval := time.Duration(inputConfig.Interval)
-		if interval < time.Second*10 {
-			interval = time.Second * 10
+		if interval < minInterval {
+			interval = minInterval
 		}
 		input, err := inputs.GetFactory(inputConfig.Name)
 		if err != nil {
@@ -211,11 +213,13 @@ func (p *Agent) runInputs() error {
 }
 
 func (p *Agent) runOutputs() error {
-	duration := time.Second * 10
-	if time.Duration(p.Config.FlushInterval) > time.Second*10 {
-		duration = time.Duration(p.Config.FlushInterval)
+	interval := time.Duration(p.Config.Exporter.FlushInterval)
+	if interval < minInterval {
+		interval = minInterval
 	}
-	ticker := time.NewTicker(duration)
+	level.Info(p.Logger).Log("msg", "run_output", "interval", interval)
+
+	ticker := time.NewTicker(interval)
 	output := p.runningOutput
 	if output == nil {
 		return errcode.Newf("nil running output")
@@ -233,8 +237,8 @@ func (p *Agent) runOutputs() error {
 				lenBuffer := p.metricsBuffer.Length()
 				for lenBuffer > 0 {
 
-					batch := p.Config.MetricBatchSize
-					if lenBuffer <= p.Config.MetricBatchSize {
+					batch := p.Config.Exporter.MetricBatchSize
+					if lenBuffer <= p.Config.Exporter.MetricBatchSize {
 						batch = lenBuffer
 					}
 
@@ -242,7 +246,7 @@ func (p *Agent) runOutputs() error {
 
 					metricBuffers, ok := p.metricsBuffer.PopMany(batch)
 					if !ok {
-						// todo log
+						level.Warn(p.Logger).Log("msg", "pop_metrics_not_correct", "batch_size", batch)
 						break
 					}
 
@@ -263,6 +267,13 @@ func (p *Agent) runOutputs() error {
 							names = append(names, metricFamily.GetName())
 						}
 
+						for k, v := range p.Config.Exporter.GlobalTags {
+							key, value := k, v
+							for _, metric := range mf.Metric {
+								metric.Label = append(metric.Label, &dto.LabelPair{Name: &key, Value: &value})
+							}
+						}
+
 						mapMetrics[mf.GetName()] = mf
 					}
 					if len(names) == 0 {
@@ -281,7 +292,7 @@ func (p *Agent) runOutputs() error {
 						break
 					}
 
-					lenBuffer -= p.Config.MetricBatchSize
+					lenBuffer -= p.Config.Exporter.MetricBatchSize
 				}
 			case <-runOut.stopChan:
 				if err := runOut.output.Close(); err != nil {
@@ -303,8 +314,8 @@ func (p *Agent) runMetricsChan() {
 				level.Info(p.Logger).Log("read_buffer_from_metric_chan", len(metrics))
 				for _, metric := range metrics {
 					lenBuffer := p.metricsBuffer.Length()
-					if lenBuffer >= p.Config.MetricBufferLimit {
-						level.Warn(p.Logger).Log("out_of_the_limit_of_buffer", lenBuffer, "limit", p.Config.MetricBufferLimit)
+					if lenBuffer >= p.Config.Exporter.MetricBufferLimit {
+						level.Warn(p.Logger).Log("out_of_the_limit_of_buffer", lenBuffer, "limit", p.Config.Exporter.MetricBufferLimit)
 						continue
 					}
 					p.metricsBuffer.Push(metric)

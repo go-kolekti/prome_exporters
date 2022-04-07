@@ -1,4 +1,4 @@
-package jmx_http
+package jmx
 
 import (
 	"bufio"
@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"trellis.tech/kolekti/prome_exporters/internal"
 	"trellis.tech/kolekti/prome_exporters/plugins"
 	"trellis.tech/kolekti/prome_exporters/plugins/inputs"
 
@@ -35,9 +36,8 @@ const sampleConfig = `
 `
 
 type HTTPMetricCollector struct {
-	client *http.Client `yaml:"-" json:"-"`
-
-	logger log.Logger `yaml:"-" json:"-"`
+	client *http.Client
+	logger log.Logger
 
 	Timeout types.Duration `toml:"timeout"`
 	// ServerTypeConfig
@@ -49,7 +49,7 @@ type HTTPMetricCollector struct {
 	TlsConfig *tls.Config `yaml:"tls_config" json:"tls_config"`
 }
 
-type JMXBeans struct {
+type Beans struct {
 	Beans []map[string]interface{} `json:"beans"`
 }
 
@@ -78,10 +78,7 @@ func (p *HTTPMetricCollector) Gather() ([]*dto.MetricFamily, error) {
 		// todo log
 		return nil, err
 	}
-	defer func() {
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-	}()
+	defer internal.IOClose(resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		errorLine := ""
@@ -99,7 +96,7 @@ func (p *HTTPMetricCollector) Gather() ([]*dto.MetricFamily, error) {
 		return nil, err
 	}
 
-	var kept = JMXBeans{}
+	var kept = Beans{}
 	if err := json.Unmarshal(bs, &kept); err != nil {
 		return nil, err
 	}
@@ -146,7 +143,7 @@ func (p *HTTPMetricCollector) Gather() ([]*dto.MetricFamily, error) {
 		}
 		metricPrefix := strings.ToLower(strings.Join(metricPrefixes, "_"))
 
-		tags := make(map[string]string)
+		tags := map[string]string{instanceLabel: urlP.Host}
 		for key, value := range values {
 			if value == nil || !strings.HasPrefix(key, "tag.") {
 				continue
@@ -175,7 +172,7 @@ func (p *HTTPMetricCollector) Gather() ([]*dto.MetricFamily, error) {
 				}
 			case int, int32, int64, float32, float64:
 			default:
-				level.Warn(p.logger).Log("msg", "value is not numeric", key, value)
+				_ = level.Warn(p.logger).Log("msg", "value is not numeric", key, value)
 				continue
 			}
 
@@ -205,17 +202,13 @@ func (p *HTTPMetricCollector) Gather() ([]*dto.MetricFamily, error) {
 
 	var metrics []*dto.MetricFamily
 	for _, mf := range metricFamilies {
-		for i, metric := range mf.GetMetric() {
-			metric.Label = append(metric.Label, &dto.LabelPair{Name: &instanceLabel, Value: &urlP.Host})
-			mf.GetMetric()[i] = metric
-		}
 		metrics = append(metrics, mf)
 	}
 	return metrics, nil
 }
 
 func init() {
-	inputs.RegisterFactory("http_jmx", func(opts ...plugins.Option) (plugins.InputMetricsCollector, error) {
+	inputs.RegisterFactory("jmx", func(opts ...plugins.Option) (plugins.InputMetricsCollector, error) {
 
 		options := &plugins.Options{}
 		for _, o := range opts {

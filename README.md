@@ -8,6 +8,12 @@ A framework for exporters to collect prometheus metrics
 * func(...inputs.Option) (prometheus.Collector, error)
 * func(...inputs.Option) (inputs.InputMetricsCollector, error)
 
+### Feature
+
+* Prometheus NodeExporter(prometheus_node_exporter)
+* Supported Java JMX HTTP API(jmx)
+* Supported Prometheus HTTP API (prometheus)
+
 ## output
 
 NewOutputFactory = func(opts ...outputs.Option) (outputs.Output, error)
@@ -28,3 +34,7 @@ type Output interface {
 	Write(metrics []*dto.MetricFamily) error
 }
 ```
+
+## todo
+
+* Output: Metrics To Kafka

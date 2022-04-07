@@ -49,6 +49,8 @@ type HTTP struct {
 	client *http.Client `yaml:"-" json:"-"`
 
 	serializer serializers.Serializer `yaml:"-" json:"-"`
+
+	PrintMetrics bool `yaml:"print_metrics" json:"print_metrics"`
 }
 
 func (h *HTTP) SetSerializer(serializer serializers.Serializer) {
@@ -89,6 +91,10 @@ func (h *HTTP) Write(metrics []*dto.MetricFamily) (err error) {
 	reqBody, err = h.serializer.SerializeBatch(metrics)
 	if err != nil {
 		return
+	}
+
+	if h.PrintMetrics {
+		fmt.Printf("http_output_metrics\n%s", string(reqBody))
 	}
 
 	if err = h.writeMetric(reqBody); err != nil {

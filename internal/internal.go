@@ -6,6 +6,11 @@ import (
 	"sync"
 )
 
+func IOClose(closer io.ReadCloser) {
+	_, _ = io.Copy(io.Discard, closer)
+	_ = closer.Close()
+}
+
 type ReadWaitCloser struct {
 	pipeReader *io.PipeReader
 	wg         sync.WaitGroup
