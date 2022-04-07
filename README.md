@@ -10,9 +10,11 @@ A framework for exporters to collect prometheus metrics
 
 ### Feature
 
-* Prometheus NodeExporter(prometheus_node_exporter)
-* Supported Java JMX HTTP API(jmx)
+* Prometheus NodeExporter (prometheus_node_exporter)
+* Supported Java JMX HTTP API (jmx)
 * Supported Prometheus HTTP API (prometheus)
+* Supported OpenTSDB HTTP API (opentsdb)
+* Zookeeper TCP: mntr (zookeeper)
 
 ## output
 
@@ -37,4 +39,5 @@ type Output interface {
 
 ## todo
 
+* Input: Prometheus Blackbox_exporter
 * Output: Metrics To Kafka
