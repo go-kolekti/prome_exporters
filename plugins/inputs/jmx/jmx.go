@@ -1,25 +1,25 @@
-package opentsdb
+package jmx
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
-	"strconv"
+	"strings"
 	"time"
+
+	"trellis.tech/kolekti/prome_exporters/internal"
+	"trellis.tech/kolekti/prome_exporters/plugins"
+	"trellis.tech/kolekti/prome_exporters/plugins/inputs"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	dto "github.com/prometheus/client_model/go"
-	"trellis.tech/kolekti/prome_exporters/internal"
-	"trellis.tech/kolekti/prome_exporters/plugins"
-	"trellis.tech/kolekti/prome_exporters/plugins/inputs"
 	"trellis.tech/trellis/common.v1/crypto/tls"
-	"trellis.tech/trellis/common.v1/json"
 	"trellis.tech/trellis/common.v1/types"
 )
 
@@ -30,19 +30,16 @@ const (
 
 var (
 	instanceLabel = "instance"
-
-	reg = regexp.MustCompile("[.-]")
 )
 
 const sampleConfig = `
 `
 
 type Collector struct {
-	client *http.Client `yaml:"-" json:"-"`
+	client *http.Client
+	logger log.Logger
 
-	logger log.Logger `yaml:"-" json:"-"`
-
-	Timeout types.Duration `yaml:"timeout" json:"timeout"`
+	Timeout types.Duration `toml:"timeout"`
 	// ServerTypeConfig
 	Schema      string `yaml:"schema" json:"schema"`
 	Host        string `yaml:"host" json:"host"`
@@ -51,9 +48,11 @@ type Collector struct {
 
 	TlsConfig *tls.Config `yaml:"tls_config" json:"tls_config"`
 
-	IgnoreMetricTimestamp bool `yaml:"ignore_metric_timestamp" json:"ignore_metric_timestamp"`
-
 	Tags map[string]string `yaml:"tags" json:"tags"`
+}
+
+type Beans struct {
+	Beans []map[string]interface{} `json:"beans"`
 }
 
 // SampleConfig returns the sample config
@@ -64,19 +63,6 @@ func (*Collector) SampleConfig() string {
 // Description returns the description
 func (*Collector) Description() string {
 	return ``
-}
-
-func timestampMsFunc(t int64) int64 {
-	switch len(strconv.Itoa(int(t))) {
-	case 10:
-		return t * 1000
-	case 13:
-		return t
-	case 16:
-		return t / 1000
-	default:
-		return time.Now().Unix() / 1e6
-	}
 }
 
 // Gather ...
@@ -112,50 +98,113 @@ func (p *Collector) Gather() ([]*dto.MetricFamily, error) {
 		return nil, err
 	}
 
-	ms := metrics{}
-
-	if err := json.Unmarshal(bs, &ms); err != nil {
+	var kept = Beans{}
+	if err := json.Unmarshal(bs, &kept); err != nil {
 		return nil, err
 	}
 
 	metricFamilies := make(map[string]*dto.MetricFamily)
 
-	for _, m := range ms {
-		metricName := reg.ReplaceAllString(m.Metric, "_")
-		mf, ok := metricFamilies[metricName]
+	for _, values := range kept.Beans {
+		if len(values) == 0 {
+			continue
+		}
+
+		nameValue, exist := values["name"]
+		if !exist {
+			continue
+		}
+
+		nameValueStr, ok := nameValue.(string)
 		if !ok {
-			typ := dto.MetricType_UNTYPED
-			mf = &dto.MetricFamily{
-				Name: &metricName,
-				Type: &typ,
+			continue
+		}
+
+		names := strings.Split(nameValueStr, ",name=")
+		if len(names) <= 1 {
+			continue
+		}
+
+		var metricPrefixes []string
+
+		serviceStr := names[0]
+		if ok := strings.Contains(serviceStr, ":service="); ok {
+			services := strings.Split(serviceStr, ":service=")
+			if len(services) <= 1 {
+				continue
+			}
+			metricPrefixes = append(metricPrefixes, services[0], services[1])
+		}
+
+		namesSubs := strings.Split(names[1], ",sub=")
+		name := strings.ToLower(namesSubs[0])
+
+		metricPrefixes = append(metricPrefixes, name)
+		if len(namesSubs) > 1 {
+			metricPrefixes = append(metricPrefixes, namesSubs[1])
+		}
+		metricPrefix := strings.ToLower(strings.Join(metricPrefixes, "_"))
+
+		tags := map[string]string{instanceLabel: urlP.Host}
+		for key, value := range values {
+			if value == nil || !strings.HasPrefix(key, "tag.") {
+				continue
+			}
+			switch t := value.(type) {
+			case string:
+				tags[strings.TrimLeft(key, "tag.")] = t
+			case int, int64, int32:
+				tags[strings.TrimLeft(key, "tag.")] = fmt.Sprintf("%d", t)
 			}
 		}
-		th, _ := m.Value.Float64()
 
-		metric := &dto.Metric{
-			Untyped: &dto.Untyped{
-				Value: &th,
-			},
+		for key, value := range values {
+			metricName := key
+			metricName = fmt.Sprintf("%s_%s", metricPrefix, key)
+
+			metricName = strings.ReplaceAll(metricName, " ", "_")
+			metricName = strings.ReplaceAll(metricName, ".", "_")
+
+			switch x := value.(type) {
+			case bool:
+				if x {
+					value = 0
+				} else {
+					value = 1
+				}
+			case int, int32, int64, float32, float64:
+			default:
+				_ = level.Warn(p.logger).Log("msg", "value is not numeric", key, value)
+				continue
+			}
+
+			mf, ok := metricFamilies[metricName]
+			if !ok {
+				typ := dto.MetricType_UNTYPED
+				mf = &dto.MetricFamily{
+					Name: &metricName,
+					Type: &typ,
+				}
+			}
+			th, _ := types.ToFloat64(value)
+
+			metric := &dto.Metric{
+				Untyped: &dto.Untyped{
+					Value: &th,
+				},
+			}
+			for k, v := range tags {
+				metric.Label = append(metric.Label, &dto.LabelPair{Name: &k, Value: &v})
+			}
+
+			for k, v := range p.Tags {
+				key, value := k, v //
+				metric.Label = append(metric.Label, &dto.LabelPair{Name: &key, Value: &value})
+			}
+
+			mf.Metric = append(mf.GetMetric(), metric)
+			metricFamilies[metricName] = mf
 		}
-		if !p.IgnoreMetricTimestamp {
-			timestampMs := timestampMsFunc(m.Timestamp)
-			metric.TimestampMs = &timestampMs
-		}
-
-		for k, v := range m.Tags {
-			key, value := k, v
-			metric.Label = append(metric.Label, &dto.LabelPair{Name: &key, Value: &value})
-		}
-
-		for k, v := range p.Tags {
-			key, value := k, v //
-			metric.Label = append(metric.Label, &dto.LabelPair{Name: &key, Value: &value})
-		}
-
-		metric.Label = append(metric.Label, &dto.LabelPair{Name: &instanceLabel, Value: &urlP.Host})
-		mf.Metric = append(mf.Metric, metric)
-
-		metricFamilies[metricName] = mf
 	}
 
 	var metrics []*dto.MetricFamily
@@ -165,15 +214,8 @@ func (p *Collector) Gather() ([]*dto.MetricFamily, error) {
 	return metrics, nil
 }
 
-type metrics []struct {
-	Metric    string            `json:"metric"`
-	Timestamp int64             `json:"timestamp"`
-	Value     json.Number       `json:"value"`
-	Tags      map[string]string `json:"tags"`
-}
-
 func init() {
-	inputs.RegisterFactory("opentsdb", func(opts ...plugins.Option) (plugins.InputMetricsCollector, error) {
+	inputs.RegisterFactory("jmx", func(opts ...plugins.Option) (plugins.InputMetricsCollector, error) {
 
 		options := &plugins.Options{}
 		for _, o := range opts {
@@ -198,7 +240,6 @@ func init() {
 		transport := &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
 		}
-
 		if p.TlsConfig != nil {
 			tlsConfig, err := p.TlsConfig.GetTLSConfig()
 			if err != nil {
@@ -221,11 +262,10 @@ func init() {
 		}
 
 		if p.Port == "" {
-			p.Port = "4242"
+			p.Port = "80"
 		}
-
 		if p.MetricsPath == "" {
-			p.MetricsPath = "/api/stats"
+			p.MetricsPath = "/jmx"
 		}
 
 		return p, nil

@@ -1,15 +1,15 @@
-package jmx
+package prometheus
 
 import (
 	"bufio"
-	"encoding/json"
+	"bytes"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"trellis.tech/kolekti/prome_exporters/internal"
@@ -18,7 +18,9 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/matttproud/golang_protobuf_extensions/pbutil"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/common/expfmt"
 	"trellis.tech/trellis/common.v1/crypto/tls"
 	"trellis.tech/trellis/common.v1/types"
 )
@@ -33,13 +35,21 @@ var (
 )
 
 const sampleConfig = `
+name: prometheus
+interval: 5s
+options:
+  host: 127.0.0.1
+  port: 9090
+  metrics_path: /metrics
+  tags:
+	haha: test
 `
 
-type HTTPMetricCollector struct {
+type Collector struct {
 	client *http.Client
 	logger log.Logger
 
-	Timeout types.Duration `toml:"timeout"`
+	Timeout types.Duration `yaml:"timeout" json:"timeout"`
 	// ServerTypeConfig
 	Schema      string `yaml:"schema" json:"schema"`
 	Host        string `yaml:"host" json:"host"`
@@ -47,24 +57,22 @@ type HTTPMetricCollector struct {
 	MetricsPath string `yaml:"metrics_path" json:"metrics_path"`
 
 	TlsConfig *tls.Config `yaml:"tls_config" json:"tls_config"`
-}
 
-type Beans struct {
-	Beans []map[string]interface{} `json:"beans"`
+	Tags map[string]string `yaml:"tags" json:"tags"`
 }
 
 // SampleConfig returns the sample config
-func (*HTTPMetricCollector) SampleConfig() string {
+func (*Collector) SampleConfig() string {
 	return sampleConfig
 }
 
 // Description returns the description
-func (*HTTPMetricCollector) Description() string {
+func (*Collector) Description() string {
 	return ``
 }
 
 // Gather ...
-func (p *HTTPMetricCollector) Gather() ([]*dto.MetricFamily, error) {
+func (p *Collector) Gather() ([]*dto.MetricFamily, error) {
 
 	urlP := &url.URL{
 		Scheme: p.Schema,
@@ -96,126 +104,64 @@ func (p *HTTPMetricCollector) Gather() ([]*dto.MetricFamily, error) {
 		return nil, err
 	}
 
-	var kept = Beans{}
-	if err := json.Unmarshal(bs, &kept); err != nil {
-		return nil, err
-	}
-
 	metricFamilies := make(map[string]*dto.MetricFamily)
 
-	for _, values := range kept.Beans {
-		if len(values) == 0 {
-			continue
-		}
+	var parser expfmt.TextParser
+	// Read raw data
+	buffer := bytes.NewBuffer(bs)
+	reader := bufio.NewReader(buffer)
 
-		nameValue, exist := values["name"]
-		if !exist {
-			continue
-		}
-
-		nameValueStr, ok := nameValue.(string)
-		if !ok {
-			continue
-		}
-
-		names := strings.Split(nameValueStr, ",name=")
-		if len(names) <= 1 {
-			continue
-		}
-
-		var metricPrefixes []string
-
-		serviceStr := names[0]
-		if ok := strings.Contains(serviceStr, ":service="); ok {
-			services := strings.Split(serviceStr, ":service=")
-			if len(services) <= 1 {
-				continue
-			}
-			metricPrefixes = append(metricPrefixes, services[0], services[1])
-		}
-
-		namesSubs := strings.Split(names[1], ",sub=")
-		name := strings.ToLower(namesSubs[0])
-
-		metricPrefixes = append(metricPrefixes, name)
-		if len(namesSubs) > 1 {
-			metricPrefixes = append(metricPrefixes, namesSubs[1])
-		}
-		metricPrefix := strings.ToLower(strings.Join(metricPrefixes, "_"))
-
-		tags := map[string]string{instanceLabel: urlP.Host}
-		for key, value := range values {
-			if value == nil || !strings.HasPrefix(key, "tag.") {
-				continue
-			}
-			switch t := value.(type) {
-			case string:
-				tags[strings.TrimLeft(key, "tag.")] = t
-			case int, int64, int32:
-				tags[strings.TrimLeft(key, "tag.")] = fmt.Sprintf("%d", t)
-			}
-		}
-
-		for key, value := range values {
-			metricName := key
-			metricName = fmt.Sprintf("%s_%s", metricPrefix, key)
-
-			metricName = strings.ReplaceAll(metricName, " ", "_")
-			metricName = strings.ReplaceAll(metricName, ".", "_")
-
-			switch x := value.(type) {
-			case bool:
-				if x {
-					value = 0
-				} else {
-					value = 1
+	mediatype, params, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err == nil && mediatype == "application/vnd.google.protobuf" &&
+		params["encoding"] == "delimited" &&
+		params["proto"] == "io.prometheus.client.MetricFamily" {
+		for {
+			mf := &dto.MetricFamily{}
+			if _, ierr := pbutil.ReadDelimited(reader, mf); ierr != nil {
+				if ierr == io.EOF {
+					break
 				}
-			case int, int32, int64, float32, float64:
-			default:
-				_ = level.Warn(p.logger).Log("msg", "value is not numeric", key, value)
-				continue
-			}
 
-			mf, ok := metricFamilies[metricName]
-			if !ok {
-				typ := dto.MetricType_UNTYPED
-				mf = &dto.MetricFamily{
-					Name: &metricName,
-					Type: &typ,
-				}
+				level.Error(p.logger).Log("error",
+					fmt.Errorf("reading metric family protocol buffer failed: %s", ierr))
 			}
-			th, _ := types.ToFloat64(value)
+			metricFamilies[mf.GetName()] = mf
+		}
+	} else {
 
-			metric := &dto.Metric{
-				Untyped: &dto.Untyped{
-					Value: &th,
-				},
-			}
-			for k, v := range tags {
-				metric.Label = append(metric.Label, &dto.LabelPair{Name: &k, Value: &v})
-			}
-
-			mf.Metric = append(mf.GetMetric(), metric)
-			metricFamilies[metricName] = mf
+		metricFamilies, err = parser.TextToMetricFamilies(reader)
+		if err != nil {
+			level.Error(p.logger).Log("error", fmt.Errorf("reading text format failed: %s", err))
 		}
 	}
 
 	var metrics []*dto.MetricFamily
 	for _, mf := range metricFamilies {
+		for i, metric := range mf.GetMetric() {
+			metric.Label = append(metric.Label, &dto.LabelPair{Name: &instanceLabel, Value: &urlP.Host})
+
+			for k, v := range p.Tags {
+				key, value := k, v //
+				metric.Label = append(metric.Label, &dto.LabelPair{Name: &key, Value: &value})
+			}
+
+			mf.GetMetric()[i] = metric
+		}
 		metrics = append(metrics, mf)
 	}
+
 	return metrics, nil
 }
 
 func init() {
-	inputs.RegisterFactory("jmx", func(opts ...plugins.Option) (plugins.InputMetricsCollector, error) {
+	inputs.RegisterFactory("prometheus", func(opts ...plugins.Option) (plugins.InputMetricsCollector, error) {
 
 		options := &plugins.Options{}
 		for _, o := range opts {
 			o(options)
 		}
 
-		p := &HTTPMetricCollector{
+		p := &Collector{
 			logger: options.Logger,
 		}
 
@@ -233,6 +179,7 @@ func init() {
 		transport := &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
 		}
+
 		if p.TlsConfig != nil {
 			tlsConfig, err := p.TlsConfig.GetTLSConfig()
 			if err != nil {
@@ -256,6 +203,10 @@ func init() {
 
 		if p.Port == "" {
 			p.Port = "80"
+		}
+
+		if p.MetricsPath == "" {
+			p.MetricsPath = "/metrics"
 		}
 
 		return p, nil
