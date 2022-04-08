@@ -1,6 +1,21 @@
 # prome_exporters
 A framework for exporters to collect prometheus metrics
 
+
+## Server Mode (command_type)
+
+* 1 : run command
+* 2 : run server 
+
+```yaml
+exporter:
+  command_type : 1 
+
+  ### supported Prometheus Blackbox_exporter
+  blackbox_probe:
+    open: false # command_type = 1 & open = true
+```
+
 ## input
 
 > input construct function
@@ -45,7 +60,8 @@ type Output interface {
 * Supported Prometheus HTTP Metric (prometheus)
 * Supported OpenTSDB HTTP Metric (opentsdb)
 
+[config sample](exporters_sample.yaml)
+
 ## todo
 
-* Input: Prometheus Blackbox_exporter
 * Output: Metrics To Kafka

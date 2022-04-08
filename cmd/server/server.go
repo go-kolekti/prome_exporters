@@ -18,8 +18,6 @@ import (
 	stdlog "log"
 	"net/http"
 
-	"trellis.tech/kolekti/prome_exporters/agent"
-
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
@@ -28,6 +26,7 @@ import (
 	"github.com/prometheus/common/version"
 	"github.com/prometheus/exporter-toolkit/web"
 	"gopkg.in/alecthomas/kingpin.v2"
+	"trellis.tech/kolekti/prome_exporters/agent"
 )
 
 var (
@@ -36,6 +35,8 @@ var (
 	webConfig              *string
 	maxRequests            *int
 	disableExporterMetrics *bool
+	historyLimit           *uint
+	timeoutOffset          *float64
 )
 
 func init() {
@@ -63,6 +64,11 @@ func init() {
 		"web.disable-exporter-metrics",
 		"Exclude metrics about the exporter itself (promhttp_*, process_*, go_*).",
 	).Bool()
+
+	historyLimit = kingpin.Flag("probe.history.limit",
+		"The maximum amount of items to keep in the history.").Default("100").Uint()
+	timeoutOffset = kingpin.Flag("probe.timeout-offset",
+		"Offset to subtract from timeout in seconds.").Default("0.5").Float64()
 }
 
 func Run(a *agent.Agent) int {
@@ -102,6 +108,17 @@ func Run(a *agent.Agent) int {
 			</body>
 			</html>`))
 	})
+
+	if a.Config.Exporter.BlackboxProbe.Open {
+		level.Info(a.Logger).Log("msg", "probe api open")
+
+		rh := &resultHistory{maxResults: *historyLimit}
+
+		http.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
+			probeHandler(w, r, a.Config.Exporter.BlackboxProbe.Modules, a.Logger, rh)
+		})
+
+	}
 
 	level.Info(a.Logger).Log("msg", "Listening on", "address", *listenAddress)
 	server := &http.Server{Addr: *listenAddress}

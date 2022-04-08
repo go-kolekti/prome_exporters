@@ -15,6 +15,7 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 package conf
 
 import (
+	beConfig "github.com/prometheus/blackbox_exporter/config"
 	"trellis.tech/trellis/common.v1/config"
 	"trellis.tech/trellis/common.v1/types"
 )
@@ -28,12 +29,20 @@ type Config struct {
 
 type ExporterConfig struct {
 	// 0 command; 1 server
-	CommandType int               `yaml:"command_type" json:"command_type"`
-	GlobalTags  map[string]string `yaml:"global_tags" json:"global_tags"`
+	CommandType int `yaml:"command_type" json:"command_type"`
+
+	GlobalTags map[string]string `yaml:"global_tags" json:"global_tags"`
 
 	FlushInterval     types.Duration `yaml:"flush_interval" json:"flush_interval"`
 	MetricBufferLimit int64          `yaml:"metric_buffer_limit" json:"metric_buffer_limit"`
 	MetricBatchSize   int64          `yaml:"metric_batch_size" json:"metric_batch_size"`
+
+	BlackboxProbe BlackboxProbeConfig `yaml:"blackbox_probe" json:"blackbox_probe"`
+}
+
+type BlackboxProbeConfig struct {
+	Open    bool             `yaml:"open" json:"open"`
+	Modules *beConfig.Config `yaml:",inline" json:",inline"`
 }
 
 type InputsConfig struct {
