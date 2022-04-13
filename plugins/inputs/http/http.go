@@ -48,9 +48,9 @@ type Collector struct {
 	client *http.Client
 	logger log.Logger
 
-	Timeout types.Duration `toml:"timeout"`
-	// ServerTypeConfig
-	Urls []string `yaml:"urls" json:"urls"`
+	Timeout types.Duration    `yaml:"timeout" json:"timeout"`
+	Urls    []string          `yaml:"urls" json:"urls"`
+	Headers map[string]string `yaml:"headers" json:"headers"`
 
 	TlsConfig *tls.Config `yaml:"tls_config" json:"tls_config"`
 
@@ -106,6 +106,9 @@ func (p *Collector) Gather() ([]*dto.MetricFamily, error) {
 func (p *Collector) gatherServer(urlP *url.URL) (map[string]*dto.MetricFamily, error) {
 
 	req, _ := http.NewRequest("GET", urlP.String(), nil)
+	for key, value := range p.Headers {
+		req.Header.Set(key, value)
+	}
 	resp, err := p.client.Do(req)
 	if err != nil {
 		// todo log

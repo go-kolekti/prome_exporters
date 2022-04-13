@@ -17,6 +17,7 @@ package jmx
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/go-kit/log"
@@ -25,6 +26,10 @@ import (
 
 	"trellis.tech/kolekti/prome_exporters/parsers"
 	"trellis.tech/trellis/common.v1/types"
+)
+
+var (
+	metricReg = regexp.MustCompile(`[\.|\-|\ ]`)
 )
 
 type Parser struct {
@@ -106,8 +111,7 @@ func (p *Parser) Parse(bs []byte, tags map[string]string, _ string) (map[string]
 			metricName := key
 			metricName = fmt.Sprintf("%s_%s", metricPrefix, key)
 
-			metricName = strings.ReplaceAll(metricName, " ", "_")
-			metricName = strings.ReplaceAll(metricName, ".", "_")
+			metricName = metricReg.ReplaceAllString(metricName, "_")
 
 			switch x := value.(type) {
 			case bool:
