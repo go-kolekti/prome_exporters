@@ -38,8 +38,6 @@ type Agent struct {
 
 	Logger log.Logger
 
-	interval time.Duration
-
 	stopChan chan struct{}
 
 	runningInputs []*runningInput
@@ -132,7 +130,9 @@ func (p *Agent) checkConfig() error {
 			reg := prometheus.NewRegistry()
 			runningInput.promeRegisterer = reg
 			runningInput.promeGatherer = reg
-			runningInput.promeRegisterer.Register(runningInput.promeCollector)
+			if err = runningInput.promeRegisterer.Register(runningInput.promeCollector); err != nil {
+				return err
+			}
 		case plugins.InputTypeMetricsCollector:
 			runningInput.metricsCollector, err = input.NewMetricsCollector(opts...)
 			if err != nil {
@@ -329,7 +329,7 @@ func (p *Agent) runMetricsChan() {
 				for _, metric := range metrics {
 					lenBuffer := p.metricsBuffer.Length()
 					if lenBuffer >= p.Config.Exporter.MetricBufferLimit {
-						level.Warn(p.Logger).Log("out_of_the_limit_of_buffer", lenBuffer, "limit", p.Config.Exporter.MetricBufferLimit)
+						level.Warn(p.Logger).Log("out_of_the_limit_of_buffer", lenBuffer, "limit", p.Config.Exporter.MetricBufferLimit, "ignore_metric", metric.GetName())
 						continue
 					}
 					p.metricsBuffer.Push(metric)

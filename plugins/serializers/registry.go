@@ -15,9 +15,9 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 package serializers
 
 import (
-	"log"
 	"strings"
 
+	"github.com/go-kit/log"
 	"trellis.tech/trellis/common.v1/config"
 	"trellis.tech/trellis/common.v1/errcode"
 )

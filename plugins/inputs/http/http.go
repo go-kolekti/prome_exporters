@@ -56,9 +56,9 @@ type Collector struct {
 
 	Tags map[string]string `yaml:"tags" json:"tags"`
 
-	Parser string `yaml:"parser" json:"parser"`
+	Parser parsers.Config `yaml:"parser" json:"parser"`
 
-	parser parsers.Parser `yaml:"-" json:"-"`
+	parser parsers.Parser
 }
 
 // SampleConfig returns the sample config
@@ -182,7 +182,7 @@ func init() {
 			Transport: transport,
 		}
 
-		p.parser, err = defaults.NewParser(p.Parser, p.logger)
+		p.parser, err = defaults.NewParser(log.With(p.logger, "parser", p.Parser.Name), p.Parser)
 		if err != nil {
 			return nil, err
 		}

@@ -20,7 +20,6 @@ import (
 	tls2 "crypto/tls"
 	"fmt"
 	"net"
-	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -58,7 +57,6 @@ var (
 )
 
 type Collector struct {
-	client    *http.Client
 	logger    log.Logger
 	tlsConfig *tls2.Config
 

@@ -16,23 +16,33 @@ package defaults
 
 import (
 	"fmt"
+	"regexp"
 
-	"trellis.tech/kolekti/prome_exporters/parsers/jmx"
-
-	"github.com/go-kit/log"
 	"trellis.tech/kolekti/prome_exporters/parsers"
+	"trellis.tech/kolekti/prome_exporters/parsers/jmx"
 	"trellis.tech/kolekti/prome_exporters/parsers/opentsdb"
 	"trellis.tech/kolekti/prome_exporters/parsers/prometheus"
+
+	"github.com/go-kit/log"
 )
 
-func NewParser(name string, logger log.Logger) (parsers.Parser, error) {
-	switch name {
+func NewParser(logger log.Logger, cfg parsers.Config) (parsers.Parser, error) {
+
+	for _, s := range cfg.PrefixWhitelist {
+		cfg.Whitelists = append(cfg.Whitelists, regexp.MustCompile(s))
+	}
+
+	for _, s := range cfg.PrefixBlacklist {
+		cfg.Blacklists = append(cfg.Blacklists, regexp.MustCompile(s))
+	}
+
+	switch cfg.Name {
 	case "", "prometheus":
-		return prometheus.NewParser(logger)
+		return prometheus.NewParser(logger, cfg)
 	case "jmx":
-		return jmx.NewParser(logger)
+		return jmx.NewParser(logger, cfg)
 	case "opentsdb":
-		return opentsdb.NewParser(logger)
+		return opentsdb.NewParser(logger, cfg)
 	default:
 		return nil, fmt.Errorf("unsupported parser type")
 	}

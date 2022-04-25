@@ -4,6 +4,8 @@ A framework for exporters to collect prometheus metrics
 
 ## Server Mode (command_type)
 
+> make GOLANGCI_LINT_OPTS="-D errorcheck"
+
 * 1 : run command
 * 2 : run server 
 

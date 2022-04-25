@@ -60,9 +60,8 @@ type HTTP struct {
 
 	TlsConfig *tls.Config `yaml:"tls_config" json:"tls_config"`
 
-	client *http.Client `yaml:"-" json:"-"`
-
-	serializer serializers.Serializer `yaml:"-" json:"-"`
+	client     *http.Client
+	serializer serializers.Serializer
 
 	PrintMetrics bool `yaml:"print_metrics" json:"print_metrics"`
 }
@@ -195,7 +194,9 @@ func init() {
 		p := &HTTP{}
 
 		if options.Config != nil {
-			options.Config.ToObject("", p)
+			if err := options.Config.ToObject("", p); err != nil {
+				return nil, err
+			}
 		}
 
 		transport := &http.Transport{

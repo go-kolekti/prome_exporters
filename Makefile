@@ -26,6 +26,8 @@ PROMTOOL         ?= $(FIRST_GOPATH)/bin/promtool
 DOCKER_IMAGE_NAME       ?= node-exporter
 MACH                    ?= $(shell uname -m)
 
+GOLANGCI_LINT_OPTS=-D errcheck
+
 
 # Use CGO for non-Linux builds.
 ifeq ($(GOOS), linux)

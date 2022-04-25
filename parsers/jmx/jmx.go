@@ -17,6 +17,7 @@ package jmx
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
 
@@ -34,12 +35,16 @@ var (
 
 type Parser struct {
 	logger log.Logger
-
-	IgnoreTimestamp bool
+	cfg    parsers.Config
 }
 
-func NewParser(logger log.Logger) (parsers.Parser, error) {
-	return &Parser{logger: logger}, nil
+func NewParser(logger log.Logger, cfg parsers.Config) (parsers.Parser, error) {
+	p := &Parser{
+		logger: logger,
+		cfg:    cfg,
+	}
+
+	return p, nil
 }
 
 type beans struct {
@@ -55,6 +60,7 @@ func (p *Parser) Parse(bs []byte, tags map[string]string, _ string) (map[string]
 
 	metricFamilies := make(map[string]*dto.MetricFamily)
 
+	metricFiltered := false
 	for _, values := range kept.Beans {
 		if len(values) == 0 {
 			continue
@@ -77,23 +83,25 @@ func (p *Parser) Parse(bs []byte, tags map[string]string, _ string) (map[string]
 
 		var metricPrefixes []string
 
-		serviceStr := names[0]
-		if ok := strings.Contains(serviceStr, ":service="); ok {
-			services := strings.Split(serviceStr, ":service=")
-			if len(services) <= 1 {
-				continue
+		if !p.cfg.JMXOptions.IgnorePrefix {
+			serviceStr := names[0]
+			if ok := strings.Contains(serviceStr, ":service="); ok {
+				services := strings.Split(serviceStr, ":service=")
+				if len(services) <= 1 {
+					continue
+				}
+				metricPrefixes = append(metricPrefixes, strings.TrimSpace(services[0]), strings.TrimSpace(services[1]))
 			}
-			metricPrefixes = append(metricPrefixes, services[0], services[1])
 		}
 
 		namesSubs := strings.Split(names[1], ",sub=")
-		name := strings.ToLower(namesSubs[0])
+		tags["name"] = strings.TrimSpace(namesSubs[0])
 
-		metricPrefixes = append(metricPrefixes, name)
 		if len(namesSubs) > 1 {
-			metricPrefixes = append(metricPrefixes, namesSubs[1])
+			tags["sub"] = strings.TrimSpace(namesSubs[1])
+		} else {
+			delete(tags, "sub")
 		}
-		metricPrefix := strings.ToLower(strings.Join(metricPrefixes, "_"))
 
 		for key, value := range values {
 			if value == nil || !strings.HasPrefix(key, "tag.") {
@@ -101,29 +109,73 @@ func (p *Parser) Parse(bs []byte, tags map[string]string, _ string) (map[string]
 			}
 			switch t := value.(type) {
 			case string:
-				tags[strings.TrimLeft(key, "tag.")] = t
+				if t = strings.TrimSpace(t); t != "" {
+					tags[strings.TrimLeft(key, "tag.")] = t
+				}
 			case int, int64, int32:
 				tags[strings.TrimLeft(key, "tag.")] = fmt.Sprintf("%d", t)
+			case float32, float64:
+				tags[strings.TrimLeft(key, "tag.")] = fmt.Sprintf("%f", t)
 			}
 		}
 
 		for key, value := range values {
-			metricName := key
-			metricName = fmt.Sprintf("%s_%s", metricPrefix, key)
+			if value == nil {
+				continue
+			}
+			//metricName := key
+			metricNames := append(metricPrefixes, strings.TrimSpace(key))
+			metricName := strings.Join(metricNames, "_")
 
 			metricName = metricReg.ReplaceAllString(metricName, "_")
 
-			switch x := value.(type) {
-			case bool:
-				if x {
-					value = 0
+			for _, wl := range p.cfg.Whitelists {
+				if wl.MatchString(metricName) {
+					// 发现匹配白名单字符串，不被过滤
+					metricFiltered = false
+					break
 				} else {
-					value = 1
+					// 发现不匹配白名单字符串，过滤
+					metricFiltered = true
 				}
-			case int, int32, int64, float32, float64:
-			default:
-				_ = level.Warn(p.logger).Log("msg", "value is not numeric", key, value)
+			}
+
+			if metricFiltered {
+				level.Debug(p.logger).Log("msg", "filter metric with whitelist", "metric", metricName)
 				continue
+			}
+
+			for _, bl := range p.cfg.Blacklists {
+				if bl.MatchString(metricName) {
+					// 发现匹配黑名单字符串，被过滤
+					metricFiltered = true
+					break
+				} else {
+					// 发现不匹配黑名单字符串，过滤
+					metricFiltered = false
+				}
+			}
+
+			if metricFiltered {
+				level.Debug(p.logger).Log("msg", "filter metric with blacklist", "metric", metricName)
+				continue
+			}
+
+			var th = 0.0
+			switch x := reflect.TypeOf(value).Kind(); x {
+			case reflect.Bool:
+				if value == true {
+					th = 1
+				} else {
+					th = 0
+				}
+			default:
+				tValue, err := types.ToFloat64(value)
+				if err != nil {
+					_ = level.Warn(p.logger).Log("msg", "value is not numeric", key, value)
+					continue
+				}
+				th = tValue
 			}
 
 			mf, ok := metricFamilies[metricName]
@@ -134,7 +186,6 @@ func (p *Parser) Parse(bs []byte, tags map[string]string, _ string) (map[string]
 					Type: &typ,
 				}
 			}
-			th, _ := types.ToFloat64(value)
 
 			metric := &dto.Metric{
 				Untyped: &dto.Untyped{

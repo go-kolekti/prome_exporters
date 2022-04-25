@@ -30,11 +30,12 @@ import (
 )
 
 type Parser struct {
+	cfg    parsers.Config
 	logger log.Logger
 }
 
-func NewParser(logger log.Logger) (parsers.Parser, error) {
-	return &Parser{logger: logger}, nil
+func NewParser(logger log.Logger, cfg parsers.Config) (parsers.Parser, error) {
+	return &Parser{logger: logger, cfg: cfg}, nil
 }
 
 func (p *Parser) Parse(body []byte, tags map[string]string, contentType string) (map[string]*dto.MetricFamily, error) {

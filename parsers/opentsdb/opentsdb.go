@@ -31,8 +31,7 @@ var (
 
 type Parser struct {
 	logger log.Logger
-
-	IgnoreTimestamp bool
+	cfg    parsers.Config
 }
 
 type metrics []struct {
@@ -42,8 +41,8 @@ type metrics []struct {
 	Tags      map[string]string `json:"tags"`
 }
 
-func NewParser(logger log.Logger) (parsers.Parser, error) {
-	return &Parser{logger: logger}, nil
+func NewParser(logger log.Logger, cfg parsers.Config) (parsers.Parser, error) {
+	return &Parser{logger: logger, cfg: cfg}, nil
 }
 
 func (p *Parser) Parse(bs []byte, tags map[string]string, _ string) (map[string]*dto.MetricFamily, error) {
@@ -73,7 +72,7 @@ func (p *Parser) Parse(bs []byte, tags map[string]string, _ string) (map[string]
 				Value: &th,
 			},
 		}
-		if !p.IgnoreTimestamp {
+		if !p.cfg.JMXOptions.IgnoreTimestamp {
 			timestampMs := timestampMsFunc(m.Timestamp)
 			metric.TimestampMs = &timestampMs
 		}
